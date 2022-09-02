@@ -1,0 +1,20 @@
+[package]
+name = "rust-walker"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+anyhow = "*"
+axum = { version = "*" }
+async-recursion = "*"
+tokio = { version = "*", features = ["full"] }
+tokio-stream = { version = "*", features = ["fs"] }
+
+[lib]
+name = "lib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rust-walker"
+path = "src/main.rs"
