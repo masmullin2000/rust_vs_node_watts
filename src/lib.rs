@@ -1,19 +1,18 @@
 #![allow(dead_code)]
 #![allow(clippy::unnecessary_unwrap)]
 
-use core::slice;
+use std::fmt::Write;
 use std::fs::read_dir;
 use std::path::PathBuf;
-use std::{cell::RefCell, fmt::Write};
 
 use anyhow::Result;
-use axum::http::header;
 use axum::{
     extract::State,
     response::{Html, IntoResponse},
+    Json,
 };
 use serde::Serialize;
-use sqlx::{postgres::PgRow, PgPool, Pool, Postgres, Row};
+use sqlx::{PgPool, Pool, Postgres, Row};
 
 const FILE: &str = include_str!("../manpage");
 
@@ -56,68 +55,39 @@ pub async fn file() -> impl IntoResponse {
     Html(FILE)
 }
 
-type sstring = smallstr::SmallString<[u8; 16]>;
 #[derive(Serialize)]
 struct User {
     uid: i32,
-    first_name: sstring,
-    last_name: sstring,
+    first_name: String,
+    last_name: String,
 }
 
-async fn get_sql(pool: Pool<Postgres>) -> Result<Vec<PgRow>> {
+async fn get_users(pool: Pool<Postgres>) -> Result<Vec<User>> {
     let db_res = sqlx::query("SELECT * from users")
         .bind("uid")
         .bind("first_name")
         .bind("last_name")
         .fetch_all(&pool)
         .await?;
-    Ok(db_res)
-}
 
-fn get_users<'a>(sql_rows: Vec<PgRow>) -> &'a [User] {
-    thread_local! {
-        static USERS: RefCell<Vec<User>> = RefCell::new(Vec::with_capacity(1000));
-    }
-
-    USERS.with(|u| {
-        let users = &mut *u.borrow_mut();
-        users.clear();
-
-        sql_rows.into_iter().for_each(|row| {
+    let users: Vec<User> = db_res
+        .into_iter()
+        .map(|row| {
             let uid: i32 = row.get(0);
             let fname: &str = row.get(1);
             let lname: &str = row.get(2);
-            users.push(User {
+            User {
                 uid,
-                first_name: sstring::from(fname),
-                last_name: sstring::from(lname),
-            })
-        });
-        //users.shrink_to(1000);
+                first_name: String::from(fname),
+                last_name: String::from(lname),
+            }
+        })
+        .collect();
 
-        let ptr = users.as_ptr();
-        unsafe { slice::from_raw_parts(ptr, users.len()) }
-    })
-}
-
-fn get_resp(sql: Vec<PgRow>) -> Vec<u8> {
-    let mut resp = Vec::with_capacity(65_535);
-    let users = get_users(sql);
-    
-    let writer = std::io::BufWriter::new(&mut resp);
-    serde_json::to_writer(writer, users).expect("blah");
-
-    resp
+    Ok(users)
 }
 
 pub async fn users(State(pool): State<PgPool>) -> impl IntoResponse {
-    let users = if let Ok(sql) = get_sql(pool).await {
-        let resp = get_resp(sql);
-        let r = unsafe { String::from_utf8_unchecked(resp) };
-        r
-    } else {
-        "".to_string()
-    };
-
-    ([(header::CONTENT_TYPE, "application/json")], users) 
+    let users = get_users(pool).await.unwrap();
+    Json(users)
 }
