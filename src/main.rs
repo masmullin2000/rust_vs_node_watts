@@ -5,9 +5,10 @@ use axum::{routing::get, Router, Server};
 
 mod lib;
 
-/*use mimalloc::MiMalloc;*/
-/*#[global_allocator]*/
-/*static GLOBAL: MiMalloc = MiMalloc;*/
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 const PORT: u16 = 8000;
 
