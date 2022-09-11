@@ -6,10 +6,16 @@ edition = "2021"
 
 [dependencies]
 anyhow = "*"
-axum = { version = "*" }
-async-recursion = "*"
+axum = { version = "0.6.0-rc", features = ["json"] }
+num_cpus = "*"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
+sqlx = { version = "*", features = ["postgres", "runtime-tokio-rustls"] }
 tokio = { version = "*", features = ["full"] }
 tokio-stream = { version = "*", features = ["fs"] }
+
+mimalloc = { version = "*", default-features = false }
+smallstr = { version = "*", features = ["serde"] }
 
 [lib]
 name = "lib"
@@ -18,3 +24,11 @@ path = "src/lib.rs"
 [[bin]]
 name = "rust-walker"
 path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = 'abort'
+
+[features]
+free_perf = []
