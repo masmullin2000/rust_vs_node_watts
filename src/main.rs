@@ -1,12 +1,9 @@
 use std::net::SocketAddr;
 
-use ::lib::{file, file_list, users};
 use axum::{routing::get, Router, Server};
-
-mod lib;
+use lib::{file, users, file_list};
 
 use mimalloc::MiMalloc;
-
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 

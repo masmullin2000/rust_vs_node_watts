@@ -3,10 +3,10 @@ name = "rust-walker"
 version = "0.1.0"
 edition = "2021"
 
-
 [dependencies]
 anyhow = "*"
 axum = { version = "0.6.0-rc", features = ["json"] }
+bytes = "*"
 num_cpus = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
@@ -29,6 +29,3 @@ path = "src/main.rs"
 lto = true
 codegen-units = 1
 panic = 'abort'
-
-[features]
-free_perf = []

@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 #![allow(clippy::unnecessary_unwrap)]
 
+pub mod utils;
+
 use core::slice;
 use std::fs::read_dir;
 use std::path::PathBuf;
@@ -14,6 +16,8 @@ use axum::{
 };
 use serde::Serialize;
 use sqlx::{postgres::PgRow, PgPool, Pool, Postgres, Row};
+
+use utils::tech_emp;
 
 const FILE: &str = include_str!("../manpage");
 
@@ -56,7 +60,9 @@ pub async fn file() -> impl IntoResponse {
     Html(FILE)
 }
 
-type sstring = smallstr::SmallString<[u8; 16]>;
+#[allow(non_camel_case_types)]
+type sstring = smallstr::SmallString<[u8; 23]>;
+
 #[derive(Serialize)]
 struct User {
     uid: i32,
@@ -64,13 +70,9 @@ struct User {
     last_name: sstring,
 }
 
+#[inline(always)]
 async fn get_sql(pool: Pool<Postgres>) -> Result<Vec<PgRow>> {
-    let db_res = sqlx::query("SELECT * from users")
-        .bind("uid")
-        .bind("first_name")
-        .bind("last_name")
-        .fetch_all(&pool)
-        .await?;
+    let db_res = sqlx::query("SELECT * from users").fetch_all(&pool).await?;
     Ok(db_res)
 }
 
@@ -83,7 +85,7 @@ fn get_users<'a>(sql_rows: Vec<PgRow>) -> &'a [User] {
         let users = &mut *u.borrow_mut();
         users.clear();
 
-        sql_rows.into_iter().for_each(|row| {
+        sql_rows.iter().for_each(|row| {
             let uid: i32 = row.get(0);
             let fname: &str = row.get(1);
             let lname: &str = row.get(2);
@@ -93,31 +95,29 @@ fn get_users<'a>(sql_rows: Vec<PgRow>) -> &'a [User] {
                 last_name: sstring::from(lname),
             })
         });
-        //users.shrink_to(1000);
+        users.shrink_to(1000);
 
         let ptr = users.as_ptr();
         unsafe { slice::from_raw_parts(ptr, users.len()) }
     })
 }
 
-fn get_resp(sql: Vec<PgRow>) -> Vec<u8> {
+fn get_resp(sql: Vec<PgRow>) -> String {
     let mut resp = Vec::with_capacity(65_535);
     let users = get_users(sql);
-    
-    let writer = std::io::BufWriter::new(&mut resp);
-    serde_json::to_writer(writer, users).expect("blah");
 
-    resp
+    let writer = tech_emp::Writer(&mut resp);
+    serde_json::to_writer(writer, users).expect("no serial");
+
+    unsafe { String::from_utf8_unchecked(resp) }
 }
 
 pub async fn users(State(pool): State<PgPool>) -> impl IntoResponse {
     let users = if let Ok(sql) = get_sql(pool).await {
-        let resp = get_resp(sql);
-        let r = unsafe { String::from_utf8_unchecked(resp) };
-        r
+        get_resp(sql)
     } else {
         "".to_string()
     };
 
-    ([(header::CONTENT_TYPE, "application/json")], users) 
+    ([(header::CONTENT_TYPE, "application/json")], users)
 }
