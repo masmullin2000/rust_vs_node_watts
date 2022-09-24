@@ -1,65 +1,19 @@
 #![allow(dead_code)]
 #![allow(clippy::unnecessary_unwrap)]
 
+pub mod file_handle;
 pub mod utils;
 
-use core::slice;
-use std::fs::read_dir;
-use std::path::PathBuf;
+use std::rc::Rc;
 use std::{cell::RefCell, fmt::Write};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use axum::http::header;
-use axum::{
-    extract::State,
-    response::{Html, IntoResponse},
-};
+use axum::{extract::State, response::IntoResponse};
 use serde::Serialize;
 use sqlx::{postgres::PgRow, PgPool, Pool, Postgres, Row};
 
 use utils::tech_emp;
-
-const FILE: &str = include_str!("../manpage");
-
-fn walk(file_list: &mut Vec<String>, root: PathBuf) -> Result<()> {
-    let dir = read_dir(root)?;
-
-    for entry in dir {
-        let entry = entry?;
-        let meta = entry.metadata()?;
-        if meta.is_dir() {
-            walk(file_list, entry.path())?;
-        } else if meta.is_file() {
-            if let Some(s) = entry.path().to_str() {
-                let s = String::from(s);
-                file_list.push(s);
-            }
-        }
-    }
-
-    Ok(())
-}
-
-pub async fn file_list() -> impl IntoResponse {
-    let mut resp_h = String::from("<ul>");
-
-    let mut file_list = Vec::new();
-    if walk(&mut file_list, PathBuf::from("/my_tmp/mainline/")).is_ok() {
-        file_list.sort_unstable();
-
-        for file in file_list {
-            _ = writeln!(resp_h, "<li>{}</li>", file);
-        }
-        resp_h.push_str("</ul>");
-    }
-
-    Html(resp_h)
-}
-
-pub async fn file() -> impl IntoResponse {
-    Html(FILE)
-}
-
 #[allow(non_camel_case_types)]
 type sstring = smallstr::SmallString<[u8; 23]>;
 
@@ -69,6 +23,16 @@ struct User {
     first_name: sstring,
     last_name: sstring,
 }
+impl User {
+    #[inline(always)]
+    fn fill_json_string(&self, s: &mut String) {
+        _ = write!(
+            s,
+            "{{\"uid\":{},\"first_name\":\"{}\",\"last_name\":\"{}\"}},",
+            self.uid, self.first_name, self.last_name
+        );
+    }
+}
 
 #[inline(always)]
 async fn get_sql(pool: Pool<Postgres>) -> Result<Vec<PgRow>> {
@@ -76,9 +40,20 @@ async fn get_sql(pool: Pool<Postgres>) -> Result<Vec<PgRow>> {
     Ok(db_res)
 }
 
-fn get_users<'a>(sql_rows: Vec<PgRow>) -> &'a [User] {
+type UsersList = Rc<RefCell<Vec<User>>>;
+trait UsersListInit {
+    fn new_list() -> Self;
+}
+impl UsersListInit for UsersList {
+    #[inline(always)]
+    fn new_list() -> Self {
+        Rc::new(RefCell::new(Vec::with_capacity(1000)))
+    }
+}
+
+fn get_users(sql_rows: Vec<PgRow>) -> Rc<RefCell<Vec<User>>> {
     thread_local! {
-        static USERS: RefCell<Vec<User>> = RefCell::new(Vec::with_capacity(1000));
+        static USERS: UsersList = UsersList::new_list();
     }
 
     USERS.with(|u| {
@@ -97,27 +72,94 @@ fn get_users<'a>(sql_rows: Vec<PgRow>) -> &'a [User] {
         });
         users.shrink_to(1000);
 
-        let ptr = users.as_ptr();
-        unsafe { slice::from_raw_parts(ptr, users.len()) }
+        u.clone()
     })
 }
 
-fn get_resp(sql: Vec<PgRow>) -> String {
+async fn get_resp_json(pool: Pool<Postgres>) -> Result<String> {
+    let sql = get_sql(pool).await?;
     let mut resp = Vec::with_capacity(65_535);
     let users = get_users(sql);
 
     let writer = tech_emp::Writer(&mut resp);
-    serde_json::to_writer(writer, users).expect("no serial");
+    serde_json::to_writer(writer, &users).expect("no serial");
 
-    unsafe { String::from_utf8_unchecked(resp) }
+    if let Ok(resp) = String::from_utf8(resp) {
+        Ok(resp)
+    } else {
+        Err(anyhow!("invalid utf8"))
+    }
 }
 
-pub async fn users(State(pool): State<PgPool>) -> impl IntoResponse {
-    let users = if let Ok(sql) = get_sql(pool).await {
-        get_resp(sql)
+async fn get_resp_json_manual(pool: Pool<Postgres>) -> Result<String> {
+    let sql = get_sql(pool).await?;
+    let mut resp = String::with_capacity(65_535);
+
+    resp.push('[');
+
+    get_users(sql).borrow().iter().for_each(|user| {
+        user.fill_json_string(&mut resp);
+    });
+
+    resp.pop();
+    resp.push(']');
+
+    Ok(resp)
+}
+
+async fn get_resp_html(pool: Pool<Postgres>) -> Result<String> {
+    let sql = get_sql(pool).await?;
+    let users = get_users(sql);
+
+    let mut resp_s = String::with_capacity(80_000);
+
+    _ = write!(resp_s, "<style> .normal {{background-color: silver;}} .highlight {{background-color: grey;}} </style><body><table>");
+    for (i, user) in users.borrow().iter().enumerate() {
+        if i % 25 == 0 {
+            _ = write!(
+                resp_s,
+                "<tr><th>UID</th><th>First Name</th><th>Last Name</th></tr>"
+            );
+        }
+
+        let class = if i % 5 == 0 { "highlight" } else { "normal" };
+        _ = write!(
+            resp_s,
+            "<tr class=\"{}\"><td>{}</td><td>{}</td><td>{}</td></tr>",
+            class, user.uid, user.first_name, user.last_name
+        );
+    }
+    _ = write!(resp_s, "</table></body>");
+
+    Ok(resp_s)
+}
+
+pub async fn users_json(State(pool): State<PgPool>) -> impl IntoResponse {
+    let users = if let Ok(users) = get_resp_json(pool).await {
+        users
     } else {
         "".to_string()
     };
 
     ([(header::CONTENT_TYPE, "application/json")], users)
+}
+
+pub async fn users_json_manual(State(pool): State<PgPool>) -> impl IntoResponse {
+    let users = if let Ok(users) = get_resp_json_manual(pool).await {
+        users
+    } else {
+        "".to_string()
+    };
+
+    ([(header::CONTENT_TYPE, "application/json")], users)
+}
+
+pub async fn users_html(State(pool): State<PgPool>) -> impl IntoResponse {
+    let users = if let Ok(u) = get_resp_html(pool).await {
+        u
+    } else {
+        "".to_string()
+    };
+
+    ([(header::CONTENT_TYPE, "text/html")], users)
 }
