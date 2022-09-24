@@ -42,18 +42,18 @@ async fn get_sql(pool: Pool<Postgres>) -> Result<Vec<PgRow>> {
 
 type UsersList = Rc<RefCell<Vec<User>>>;
 trait UsersListInit {
-    fn new_list() -> Self;
+    fn with_capacity(sz: usize) -> Self;
 }
 impl UsersListInit for UsersList {
     #[inline(always)]
-    fn new_list() -> Self {
-        Rc::new(RefCell::new(Vec::with_capacity(1000)))
+    fn with_capacity(sz: usize) -> Self {
+        Rc::new(RefCell::new(Vec::with_capacity(sz)))
     }
 }
 
 fn get_users(sql_rows: Vec<PgRow>) -> Rc<RefCell<Vec<User>>> {
     thread_local! {
-        static USERS: UsersList = UsersList::new_list();
+        static USERS: UsersList = UsersList::with_capacity(1000);
     }
 
     USERS.with(|u| {

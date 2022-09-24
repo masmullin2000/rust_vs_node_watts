@@ -48,6 +48,7 @@ app.get('/file_list', (req, res) => {
 
 const FILE = fs.readFileSync('manpage', 'utf8')
 app.get('/file', (req, res) => {
+    res.header("Content-type", "text/html")
     res.send(FILE)
 })
 
