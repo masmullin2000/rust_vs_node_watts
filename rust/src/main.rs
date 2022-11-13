@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use axum::{routing::get, Router, Server};
 use lib::file_handle::{file, file_list};
-use lib::{users_html, users_json, users_json_manual};
+use lib::{users_html, users_json, users_json_manual, users_json_agg};
 
 use mimalloc::MiMalloc;
 #[global_allocator]
@@ -20,6 +20,7 @@ async fn run(port: u16) {
         .route("/file_list", get(file_list))
         .route("/file", get(file))
         .route("/users_json", get(users_json))
+        .route("/users_json_agg", get(users_json_agg))
         .route("/users_json_manual", get(users_json_manual))
         .route("/users_html", get(users_html));
 

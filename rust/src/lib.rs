@@ -4,35 +4,14 @@
 pub mod file_handle;
 pub mod utils;
 
-use std::rc::Rc;
-use std::{cell::RefCell, fmt::Write};
+use std::fmt::Write;
 
-use anyhow::{anyhow, Result};
-use axum::http::header;
-use axum::{extract::State, response::IntoResponse};
+use anyhow::Result;
+use axum::{extract::State, http::header, response::IntoResponse};
 use serde::Serialize;
 use sqlx::{postgres::PgRow, PgPool, Pool, Postgres, Row};
 
 use utils::tech_emp;
-#[allow(non_camel_case_types)]
-type sstring = smallstr::SmallString<[u8; 23]>;
-
-#[derive(Serialize)]
-struct User {
-    uid: i32,
-    first_name: sstring,
-    last_name: sstring,
-}
-impl User {
-    #[inline(always)]
-    fn fill_json_string(&self, s: &mut String) {
-        _ = write!(
-            s,
-            "{{\"uid\":{},\"first_name\":\"{}\",\"last_name\":\"{}\"}},",
-            self.uid, self.first_name, self.last_name
-        );
-    }
-}
 
 #[inline(always)]
 async fn get_sql(pool: Pool<Postgres>) -> Result<Vec<PgRow>> {
@@ -40,66 +19,80 @@ async fn get_sql(pool: Pool<Postgres>) -> Result<Vec<PgRow>> {
     Ok(db_res)
 }
 
-type UsersList = Rc<RefCell<Vec<User>>>;
-trait UsersListInit {
-    fn with_capacity(sz: usize) -> Self;
+#[derive(Serialize)]
+struct User<'a> {
+    uid: i32,
+    fname: &'a str,
+    lname: &'a str,
 }
-impl UsersListInit for UsersList {
+
+trait ToUser {
+    fn user(&self) -> User;
+}
+
+impl ToUser for PgRow {
     #[inline(always)]
-    fn with_capacity(sz: usize) -> Self {
-        Rc::new(RefCell::new(Vec::with_capacity(sz)))
+    fn user(&self) -> User {
+        User {
+            uid: self.get_unchecked(0),
+            fname: self.get_unchecked(1),
+            lname: self.get_unchecked(2),
+        }
     }
 }
 
-fn get_users(sql_rows: Vec<PgRow>) -> Rc<RefCell<Vec<User>>> {
-    thread_local! {
-        static USERS: UsersList = UsersList::with_capacity(1000);
+#[inline(always)]
+fn get_users(rows: &[PgRow]) -> Vec<User> {
+    let mut x = Vec::with_capacity(rows.len());
+
+    for i in rows {
+        let u = i.user();
+        x.push(u);
     }
 
-    USERS.with(|u| {
-        let users = &mut *u.borrow_mut();
-        users.clear();
-
-        sql_rows.iter().for_each(|row| {
-            let uid: i32 = row.get(0);
-            let fname: &str = row.get(1);
-            let lname: &str = row.get(2);
-            users.push(User {
-                uid,
-                first_name: sstring::from(fname),
-                last_name: sstring::from(lname),
-            })
-        });
-        users.shrink_to(1000);
-
-        u.clone()
-    })
+    x
 }
 
-async fn get_resp_json(pool: Pool<Postgres>) -> Result<String> {
-    let sql = get_sql(pool).await?;
+impl<'a> User<'a> {
+    #[inline(always)]
+    fn fill_json_string(&self, s: &mut String) {
+        _ = write!(
+            s,
+            "{{\"uid\":{},\"fname\":\"{}\",\"lname\":\"{}\"}},",
+            self.uid, self.fname, self.lname
+        );
+    }
+}
+
+fn get_resp_json(db_res: Vec<PgRow>) -> Result<Vec<u8>> {
     let mut resp = Vec::with_capacity(65_535);
-    let users = get_users(sql);
+    let users = get_users(&db_res);
 
     let writer = tech_emp::Writer(&mut resp);
     serde_json::to_writer(writer, &users).expect("no serial");
 
-    if let Ok(resp) = String::from_utf8(resp) {
-        Ok(resp)
-    } else {
-        Err(anyhow!("invalid utf8"))
-    }
+    Ok(resp)
 }
 
-async fn get_resp_json_manual(pool: Pool<Postgres>) -> Result<String> {
-    let sql = get_sql(pool).await?;
+pub async fn users_json(State(pool): State<PgPool>) -> impl IntoResponse {
+    let db_res = get_sql(pool).await.unwrap();
+    let users = if let Ok(users) = get_resp_json(db_res) {
+        users
+    } else {
+        Vec::new()
+    };
+
+    ([(header::CONTENT_TYPE, "application/json")], users)
+}
+
+fn get_resp_json_manual(sql: Vec<PgRow>) -> Result<String> {
     let mut resp = String::with_capacity(65_535);
 
     resp.push('[');
 
-    get_users(sql).borrow().iter().for_each(|user| {
-        user.fill_json_string(&mut resp);
-    });
+    for row in &sql {
+        row.user().fill_json_string(&mut resp);
+    }
 
     resp.pop();
     resp.push(']');
@@ -107,14 +100,23 @@ async fn get_resp_json_manual(pool: Pool<Postgres>) -> Result<String> {
     Ok(resp)
 }
 
-async fn get_resp_html(pool: Pool<Postgres>) -> Result<String> {
-    let sql = get_sql(pool).await?;
-    let users = get_users(sql);
+pub async fn users_json_manual(State(pool): State<PgPool>) -> impl IntoResponse {
+    let db_res = get_sql(pool).await.unwrap();
+    let users = if let Ok(users) = get_resp_json_manual(db_res) {
+        users
+    } else {
+        "".to_string()
+    };
 
+    ([(header::CONTENT_TYPE, "application/json")], users)
+}
+
+fn get_resp_html(sql: Vec<PgRow>) -> Result<String> {
     let mut resp_s = String::with_capacity(80_000);
 
     _ = write!(resp_s, "<style> .normal {{background-color: silver;}} .highlight {{background-color: grey;}} </style><body><table>");
-    for (i, user) in users.borrow().iter().enumerate() {
+    for (i, row) in sql.iter().enumerate() {
+        let user = row.user();
         if i % 25 == 0 {
             _ = write!(
                 resp_s,
@@ -126,7 +128,7 @@ async fn get_resp_html(pool: Pool<Postgres>) -> Result<String> {
         _ = write!(
             resp_s,
             "<tr class=\"{}\"><td>{}</td><td>{}</td><td>{}</td></tr>",
-            class, user.uid, user.first_name, user.last_name
+            class, user.uid, user.fname, user.lname
         );
     }
     _ = write!(resp_s, "</table></body>");
@@ -134,28 +136,23 @@ async fn get_resp_html(pool: Pool<Postgres>) -> Result<String> {
     Ok(resp_s)
 }
 
-pub async fn users_json(State(pool): State<PgPool>) -> impl IntoResponse {
-    let users = if let Ok(users) = get_resp_json(pool).await {
-        users
-    } else {
-        "".to_string()
-    };
+pub async fn users_json_agg(State(pool): State<PgPool>) -> impl IntoResponse {
+    const QUERY: &str = "SELECT JSON_agg(users) from users";
+    //const QUERY: &str = "SELECT json_strip_nulls(JSON_agg(users)) from users";
 
-    ([(header::CONTENT_TYPE, "application/json")], users)
-}
+    let res = sqlx::query(QUERY).fetch_one(&pool).await.unwrap();
 
-pub async fn users_json_manual(State(pool): State<PgPool>) -> impl IntoResponse {
-    let users = if let Ok(users) = get_resp_json_manual(pool).await {
-        users
-    } else {
-        "".to_string()
-    };
+    let mut resp = Vec::with_capacity(65_535);
+    let mut writer = tech_emp::Writer(&mut resp);
+    let users: &sqlx::types::JsonRawValue = res.get_unchecked(0);
+    _ = std::io::Write::write(&mut writer, users.get().as_bytes());
 
-    ([(header::CONTENT_TYPE, "application/json")], users)
+    ([(header::CONTENT_TYPE, "application/json")], resp)
 }
 
 pub async fn users_html(State(pool): State<PgPool>) -> impl IntoResponse {
-    let users = if let Ok(u) = get_resp_html(pool).await {
+    let sql = get_sql(pool).await.unwrap();
+    let users = if let Ok(u) = get_resp_html(sql) {
         u
     } else {
         "".to_string()

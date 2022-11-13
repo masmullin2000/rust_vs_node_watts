@@ -67,6 +67,23 @@ app.get('/users_json', (req, res) => {
         .catch(e => console.error(e.stack))
 })
 
+const query_agg = {
+    name: 'get_agg_users',
+    text: 'SELECT JSON_agg(users) from users',
+}
+app.get('/users_json_agg', (req, res) => {
+    pool
+        .query(query_agg)
+        .then(db_res => {
+            const json = db_res.rows[0]
+            res.header("Content-type", "application/json")
+            res.send(json)
+        })
+        .catch(e => console.error(e.stack))
+})
+
+
+
 app.get('/users_html', async (req, res) => {
     let resp = '<style> .normal {background-color: silver;} .highlight {background-color: grey;} </style><body><table>'
     i = 0

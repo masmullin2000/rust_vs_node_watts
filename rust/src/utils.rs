@@ -40,5 +40,12 @@ pub mod tech_emp {
             Ok(())
         }
     }
+
+    impl<'a, B: bytes::BufMut> Writer<'a, B> {
+        #[inline(always)]
+        pub fn push(&mut self, byte: u8) {
+            self.0.put_u8(byte);
+        }
+    }
 }
 
