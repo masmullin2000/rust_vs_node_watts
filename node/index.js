@@ -69,7 +69,7 @@ app.get('/users_json', (req, res) => {
 
 const query_agg = {
     name: 'get_agg_users',
-    text: 'SELECT JSON_agg(users) from users',
+    text: 'SELECT JSON_agg(users)::text from users',
 }
 app.get('/users_json_agg', (req, res) => {
     pool

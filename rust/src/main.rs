@@ -2,19 +2,27 @@ use std::net::SocketAddr;
 
 use axum::{routing::get, Router, Server};
 use lib::file_handle::{file, file_list};
-use lib::{users_html, users_json, users_json_manual, users_json_agg};
+use lib::{users_html, users_json, users_json_agg, users_json_manual};
 
 use mimalloc::MiMalloc;
+use tokio_postgres::NoTls;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
 const PORT: u16 = 8000;
 
 async fn run(port: u16) {
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect("postgress://mm:.@localhost/list_of_users")
-        .await
-        .unwrap();
+    /*let pool = sqlx::postgres::PgPoolOptions::new()*/
+    /*.connect("postgress://mm:.@localhost/list_of_users")*/
+    /*.await*/
+    /*.unwrap();*/
+    let manager = bb8_postgres::PostgresConnectionManager::new_from_stringlike(
+        "host=localhost user=mm password=. dbname=list_of_users",
+        NoTls,
+    )
+    .unwrap();
+
+    let pool = bb8::Pool::builder().build(manager).await.unwrap();
 
     let app = Router::with_state(pool)
         .route("/file_list", get(file_list))
