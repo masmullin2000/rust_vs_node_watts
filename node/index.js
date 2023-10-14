@@ -10,7 +10,7 @@ const { Pool, Client } = require('pg')
 const pool = new Pool({
     user: 'mm',
     database: 'list_of_users',
-    password: '.'
+    password: 'password'
 })
 
 function walk(l, dir) {
@@ -81,8 +81,6 @@ app.get('/users_json_agg', (req, res) => {
         })
         .catch(e => console.error(e.stack))
 })
-
-
 
 app.get('/users_html', async (req, res) => {
     let resp = '<style> .normal {background-color: silver;} .highlight {background-color: grey;} </style><body><table>'

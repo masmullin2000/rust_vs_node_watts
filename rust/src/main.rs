@@ -1,23 +1,29 @@
 use std::net::SocketAddr;
 
 use axum::{routing::get, Router, Server};
+use tokio_postgres::NoTls;
+
 use lib::file_handle::{file, file_list};
 use lib::{users_html, users_json, users_json_agg, users_json_manual};
 
-use mimalloc::MiMalloc;
-use tokio_postgres::NoTls;
+//use mimalloc::MiMalloc as Alloc;
+use tikv_jemallocator::Jemalloc as Alloc;
 #[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+static GLOBAL: Alloc = Alloc;
 
 const PORT: u16 = 8000;
 
-async fn run(port: u16, user: &str, pword: &str, dbname: &str) {
+async fn run(port: u16, user: &str, pword: &str, dbname: &str, pool_sz: u32) {
     let conn_param = format!("host=localhost user={user} password={pword} dbname={dbname}");
 
     let manager =
         bb8_postgres::PostgresConnectionManager::new_from_stringlike(&conn_param, NoTls).unwrap();
 
-    let pool = bb8::Pool::builder().build(manager).await.unwrap();
+    let pool = bb8::Pool::builder()
+        .max_size(pool_sz)
+        .build(manager)
+        .await
+        .unwrap();
 
     let app = Router::new()
         .route("/file_list", get(file_list))
@@ -49,6 +55,12 @@ fn main() {
         num_cpus::get()
     };
 
+    let pool_sz = if args.len() >= 4 {
+        args[3].parse::<u32>().unwrap_or_else(|_| 10)
+    } else {
+        10
+    };
+
     println!("Running on port {port} with {threads} threads");
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -57,5 +69,5 @@ fn main() {
         .build()
         .unwrap();
 
-    rt.block_on(async { run(port, "postgres", "password", "list_of_users").await });
+    rt.block_on(async { run(port, "mm", "password", "list_of_users", pool_sz).await });
 }

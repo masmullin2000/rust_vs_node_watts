@@ -2,7 +2,11 @@
 
 AMT=$(($1 + 0))
 
-echo "DELETE from users where uid >= 0;" > insert.sql
+echo "DROP TABLE users;" > insert.sql
+
+echo "CREATE TABLE users (uid INT, fname VARCHAR(255), lname VARCHAR(255));" >> insert.sql
+
+echo "DELETE from users where uid >= 0;" >> insert.sql
 
 for (( i=1; i<=$AMT; i++ )) 
 do

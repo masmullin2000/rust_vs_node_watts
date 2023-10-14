@@ -14,8 +14,10 @@ serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 tokio = { version = "*", features = ["full"] }
 tokio-postgres = { version = "*", features = ["with-serde_json-1"] }
+tikv-jemallocator = "0.5.4"
 
-mimalloc = { version = "*", default-features = false }
+#mimalloc = { version = "*", features = ["secure"] }
+#snmalloc-rs = { version = "*", features = ["check"] }
 
 [lib]
 name = "lib"
